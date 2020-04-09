@@ -1,0 +1,334 @@
+---
+title: "ARIMA"
+author: "Волканова Маргарита"
+date: '16 мая 2019 г '
+output:
+  html_document:
+    toc: true 
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+---
+
+
+#Auto Regressive Integrated Moving Average proceses 
+
+Стационарны процессы:
+\[x_t=c+\sum_{i=1}^{p}\phi_ix_{t-i}+\epsilon_t,\]
+$\epsilon_t$ - независима от $x_{t-i}$, $E\epsilon_t=0, D\epsilon_t=\sigma^2$. Условие на $\phi_t$: $x_t$ - стационарный.
+
+##Модель авторегрессии AR через оператор сдвига
+Пусть $с=0_p$ \[L: Lx_t = x_{t-1}\]
+\[x_t=\sum_{i=1}^{p}\phi_iL^ix_t+\epsilon_t\]
+Модель авторегресии
+\[ \epsilon_t=(1-\sum_{i=1}^p\phi_iL^i)x_t = \Phi_p(L)x_t,\]
+где $\Phi_p$ - хар. полином. 
+
+##AR(p) и модель сигнала в SSA
+Пусть существует \[S_t = \sum_{i=1}^p \phi_i s_{t-i} \text{ - сигнал, где } x_t=s_t+\epsilon_t\]. 
+
+Модель авторегресси имеет вид:
+\[x_t=\sum_{i=1}^p \phi_i x_{t-i} + \epsilon_t\]
+(Для SSA - шум добавляется к всему сигналу, а в AR на каждом шаге.)
+
+
+Построим для них acf и pacf.
+
+pacf - частная автокорреляция - обычная корреляция между остатками после регрессии.
+\[ pacf(m)= \rho ( x_t,x_{t+m} \text{; } x_{t+1} \ldots x_{t+m-1}) \]
+
+Пунктирными линиями на графиках отмечен критический интервал $[-\frac{2}{\sqrt{n}},\frac{2}{\sqrt{n}}]$, в пределах которых ACF и PACF считаются не отличающимися от нуля.
+
+```{r}
+library("forecast")
+library("Rssa")
+data <-read.csv('D:/Golyandina/arima/ts2.txt', sep="\t", header=TRUE) 
+data<-ts(data)
+auto.arima(data)
+arima(data)
+ggtsdisplay(data)
+```
+
+То есть ARMA(0,0,2) уравнение имеет вид:
+\[z_t=1.008+x_t+0.003, x_t=\epsilon_t+0.232\epsilon_{t-1}+0.113\epsilon_{t-2}\]
+По количеству столбцов ACF, значимо отличающихся от нуля, можно определить количество параметров в модели. У нас два, собственно что и требуется. (MA(2), acf(m)=0 при m>2)
+
+##AIC,BIC
+Выбрать модель можно по критерию AIC(Информационный критерий Акаике):
+\[AIC=-2\ln L+2k,\]
+где $\ln L$ - логарифм функции правдоподобия, а $k$ - число параметров модели.
+
+Чем больше параметров, $k$, тем сложнее модель, тем выше AIC. Чем ниже функция правдоподобия, L, то есть, чем ниже вероятность получить имеющиеся данные при данной модели, тем выше AIC.
+```{r}
+ar002 <- Arima(data, order = c(0, 0, 2)) 
+ar101 <- Arima(data, order = c(1, 0, 1)) 
+c(AIC(ar002),AIC(ar101))
+```
+Видим, что по AIC модель (0,0,2) лучше
+
+Критерий BIC (Байесовский информационный критерий):
+\[BIC=-2\ln L+\ln nk,\]
+```{r}
+
+c(BIC(ar002),BIC(ar101))
+```
+
+По данном критерию модель (0,0,2) лучше.
+
+Посмотрим остатки 
+
+```{r}
+checkresiduals(resid(ar002))
+#fitdf - число степеней свободы p+q=2
+#Для несезонных рядов рекомендует брать lag=10
+Box.test(resid(ar002), lag = 10, type = "Ljung-Box",fitdf=2)
+
+```
+
+Получаем, что гипотеза белого шума не отвергается, а значит модель корректно описывает структуру корреляции.
+
+#ets для модельного ряда
+Посмотрим какю модель он определит сам
+```{r}
+data.ets<-forecast(ets(data),h=24)
+plot(data.ets)
+```
+Теперь посмотрим как он построит модель AАN
+```{r}
+data.ets<-forecast(ets(data,model = "AAN"),h=24)
+plot(data.ets)
+#lines(fort_old, col="red")
+```
+
+##Вид автоковариационной функции acf для AR(p)
+##AR(p)
+Смоделируем данные для авторегрессии порядка 1 с разными по знаку коэффициентами. Построим для них acf и pacf .
+
+```{r}
+set.seed(1)#фиксатор - чтобы получить один и тот же набор случайных чисел для каждого вызова функции  
+AR_1 <- arima.sim(n = 2000, list(order = c(1,0,0), ar = 0.7), sd = sqrt(0.4))
+ggtsdisplay(AR_1, main ="AR(1), phi>0" )
+```
+
+
+```{r}
+set.seed(1)
+AR_1_ <- arima.sim(n = 2000, list(order = c(1,0,0), ar = -0.7), sd = sqrt(0.4))
+ggtsdisplay(AR_1_,main ="AR(1), phi<0" )
+```
+В обоих случаях видим на PACF один скачок. 
+
+#Модель MA(q)
+Модель скользящего среднего (т.е. это скользящее среднее к белому шуму)
+\[X_t=\epsilon_t+\sum_{i=1}^q Q_i\epsilon_{t-i}\]
+$\epsilon_t$ - белый шум, $Q_i$ - параметры.
+```{r}
+set.seed(1)
+MA_1 <- arima.sim(n = 2000, list(order = c(0,0,1), ma = 0.7), sd = sqrt(0.4))
+ggtsdisplay(MA_1,main ="MA(1), Q>0" )
+```
+
+```{r}
+set.seed(1)
+MA_1_ <- arima.sim(n = 2000, list(order = c(0,0,1), ma = -0.7), sd = sqrt(0.4))
+ggtsdisplay(MA_1_,main ="MA(1), Q<0" )
+```
+В обоих случаях видим на ACF один скачок. 
+
+##ARMA(p,q)
+
+Модель ARMA(p,q) выглядит следующим образом:
+\[X_t=c+\sum_{i=1}^{p}\phi_ix_{t-i}+\epsilon_t+\sum_{i=1}^q Q_i\epsilon_{t-i}\]
+Используя операторы сдвига:
+\[\Phi_p(L)x_t=H_q(L)\epsilon_t,\]
+где $H_q$ - полином порядка q.
+```{r}
+set.seed(1)
+ARMA_11 <- arima.sim(n = 2000, list(order = c(1,0,1), ma = -0.3,arg=0.7), sd = sqrt(0.4))
+ggtsdisplay(ARMA_11,main ="ARMA(1,1)" )
+```
+
+##ARIMA(p,d,q)
+
+Модель ARIMA(p,d,q) c помощью операторов сдвига:
+\[\Phi_p(L)(1-L)^dx_t=H_q(L)\epsilon_t\]
+```{r}
+set.seed(1)
+ARIMA_211 <- arima.sim(n = 2000, list(ar = c(0.4, -0.6), ma = 0.3, order = c(2,1,1)), sd = sqrt(0.4))
+ggtsdisplay(ARIMA_211,main ="ARIMA(2,1,1)" )
+```
+Перейдем к разностям.
+```{r}
+library( aTSA)
+ARIMA_211.diff <- diff(ARIMA_211)
+ggtsdisplay(ARIMA_211.diff,main ="diff(ARIMA(2,1,1))" )
+#Проверим на стационарность ряд - альтернативная гипотеза 
+adf.test(ARIMA_211.diff)
+#Ряд - стационарный, то есть d=1
+```
+Дальше, чтобы определить модель смотрим acf и pacf. Вот здесь считем p:pacf(m)=0,m>p для AR(p). Для MA(q) - наоборот, p:acf(m)=0,m>p.
+
+У pacf явно вылез второй элемент, а вот для acf как будто и 3 подходят. 
+Посмотрим AIC BIC
+```{r}
+ar213 <- Arima(data, order = c(2, 1, 3)) 
+ar212 <- Arima(data, order = c(2, 1, 2))
+ar211 <- Arima(data, order = c(2, 1, 1)) 
+c(AIC(ar213),AIC(ar212),AIC(ar211))
+```
+Для AIC почти одинаковые все, на сотые различаются. 
+```{r}
+c(BIC(ar213),BIC(ar212),BIC(ar211))
+```
+А по BIC явно видим, что нам нужна третья модель.
+
+Смотрим авторегрессию. 
+```{r}
+auto.arima(ARIMA_211)
+```
+
+#Seasonal ARIMA(p,d,q)(P,D,Q) (Сезонная авторегрессия)
+$\Phi_p$ - полином порядка p, $\Phi_P^s$ - полином порядка P,s - период. 
+
+Воспользуюсь данными из прошлого отчета. 
+
+```{r}
+data("AustralianWine")
+wine <- window(AustralianWine, end = time(AustralianWine)[180])
+fort<- ts(wine[, "Drywhite"],frequency = 12)#fort_old
+#Здесь я делаю замену, беру за fort часть ряда
+wine_ol <- window(AustralianWine, end = time(AustralianWine)[156])
+fort_train<- ts(wine_ol[, "Drywhite"],frequency = 12)#fort
+
+
+fort_test<-ts(wine[157:180,"Drywhite"],frequency = 12)
+ggtsdisplay(fort_train,main ="Fort" )
+
+```
+
+###ARIMA
+```{r}
+summary(auto.arima(fort_train))
+#drift - сдвиг 
+```
+
+Спрогнозируем 24 точки и сравним с истинными значениями. 
+```{r}
+fort_train.arima <- arima(fort_train, order = c(0,0,1), seasonal = list(order = c(0,1,1), period = 12))
+
+plot(forecast::forecast(fort_train.arima, h = 24))
+lines(fort, col="red")
+```
+Убедимся, что остатки модели временного ряда выглядят как белый шум
+```{r}
+checkresiduals(fort_train.arima)
+```
+Вроде как по тесту все хорошо, да и гистограмма имеет нормальное распределение. Но ACF явно периодична, поэтому меня немного это смущает. 
+
+###ETS 
+
+Cпрогнозируем с помощью ETS.
+
+Сначала посмотрим какую модель определит сам ets, по умолчанию модель ZZZ.
+```{r}
+fort_train.ets<-forecast::forecast(ets(fort_train))
+plot(fort_train.ets)
+lines(fort, col="red")
+checkresiduals(fort_train.ets)
+```
+
+
+Как альтернативу возьму модель MNM 
+```{r}
+fort_train.ets_MNM<-forecast::forecast(ets(fort_train,model="MNM"))
+plot(fort_train.ets_MNM)
+lines(fort, col="red")
+checkresiduals(fort_train.ets_MNM)
+```
+
+Сравним вышеперечисленные прогнозы.
+```{r}
+ets_MNA_err<-sqrt(mean(fort_train.ets$residuals**2))
+ets_MNM_err<-sqrt(mean(fort_train.ets_MNM$residuals**2))
+name<-c("ets_MNA","ets_MNM")
+error<-c(ets_MNA_err,ets_MNM_err)
+err<-data.frame(Name=name, Error=error )
+err
+```
+
+
+У ets с моделью MAM самая маленькая ошибка, то есть самое хорошее предсказание. 
+
+
+#Прогноз 
+В SSA существует два типа прогноза - реккурентный и векторный.
+
+##Прогноз для сигнала 
+###Vector forecast
+
+```{r}
+h = 24
+train <- fort_train
+ssa.train <- ssa(train)
+```
+
+Знаю из предыдущего отчета, какие компоненты под сигнал и тренд, но посмотрим, сколько брать компонент для тренировочной выборки.
+```{r}
+plot(wcor(ssa.train, groups = 1:30))
+```
+
+Беру 14 компонент под сигнал, дальше компоненты смешиваются. Под тренд 1 и 14 компоненту.
+
+```{r}
+#Данные компоненты взяла по предыдущему отчету
+v_fort <- vforecast(ssa.train, groups = list(Trend = c(1,14), Signal = 1:14),len = 24, only.new = TRUE)
+#plot(wcor(ssa.train))
+plot(fort,col="black",type='l')
+lines(v_fort$Signal,col="red",type="l")
+lines(fort_train,col="blue")
+```
+
+Синий цвет - тренировочная выборка, красный - предсказание, черный - истина. Мне нравится как получилось. 
+
+###Recurrent forecast
+
+```{r}
+
+r_fort <- rforecast(ssa.train, groups = list(Trend = c(1,14), Signal = 1:14),len = 24, only.new = TRUE)
+
+plot(fort,col="black",type='l')
+lines(r_fort$Signal,col="red",type="l")
+lines(fort_train,col="blue")
+```
+```{r}
+arima_err<-sqrt(mean(fort_train.arima$residuals**2))
+v_err<-sqrt(mean((as.numeric(v_fort$Signal)-as.numeric(fort_test))**2))
+r_err<-sqrt(mean((as.numeric(r_fort$Signal)-as.numeric(fort_test))**2))
+name<-c("arima","Vector forecast","Recurrent forecast")
+error<-c(arima_err,v_err,r_err)
+err<-data.frame(Name=name, Error=error )
+err
+```
+
+Видим, что в данном случае arima справился лучше всех.
+
+##Доверительные интервалы
+
+###Vector
+```{r}
+library("forecast")
+DI_Vec <- forecast::forecast(ssa.train, groups = list(1:14), method = "vector", interval = "confidence", bootstrap = TRUE, len = 24)
+plot(DI_Vec, type = "l",  shadecols = "green")
+lines(fort,col="red")
+```
+
+###Recurrent
+```{r}
+DI_rec <- forecast::forecast(ssa.train, groups = list(1:14), method = "recurrent", interval = "confidence", bootstrap = TRUE, len = 24)
+plot(DI_rec, type = "l",  shadecols = "green")
+lines(fort,col="red")
+```
+
+
+
+
